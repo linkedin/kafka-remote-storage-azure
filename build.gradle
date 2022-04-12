@@ -1,0 +1,25 @@
+group = "com.linkedin.kafka.tiered.storage"
+
+version = "0.0.1"
+
+wrapper {
+  gradleVersion = "7.3.3"
+}
+
+allprojects {
+  repositories {
+    mavenCentral()
+  }
+
+  ext.depVersions = [
+    "azureIdentity": "1.3.6",
+    "azureBlobStorage": "12.14.0",
+    "kafkaReleaseVersion": "3.0.0",
+    "dropwizardMetrics": "4.2.5",
+    "jCommander": "1.81",
+    "slf4jApi": "1.7.32",
+    "log4j": "2.17.2",
+    "junitJupiter": "5.8.1",
+    "mockitoJunitJupiter": "3.3.3"
+  ]
+}

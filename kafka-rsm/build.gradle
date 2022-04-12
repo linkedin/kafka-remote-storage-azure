@@ -1,0 +1,24 @@
+plugins {
+  id "java"
+  id "idea"
+}
+
+dependencies {
+  implementation "com.azure:azure-identity:${depVersions.azureIdentity}"
+  implementation "com.azure:azure-storage-blob:${depVersions.azureBlobStorage}"
+  implementation "org.apache.kafka:kafka-clients:${depVersions.kafkaReleaseVersion}"
+  implementation "org.apache.kafka:kafka-storage:${depVersions.kafkaReleaseVersion}"
+  implementation "org.apache.kafka:kafka-storage-api:${depVersions.kafkaReleaseVersion}"
+  implementation "io.dropwizard.metrics:metrics-core:${depVersions.dropwizardMetrics}"
+
+  // Tests use slf4j logging api with log4j2 backend.
+  // log4j-slf4j-impl initializes the logging system with properties in log4j2.xml
+  // Also prevent slf4j runtime warning: Failed to load class org.slf4j.impl.StaticLoggerBinder
+  implementation "org.slf4j:slf4j-api:${depVersions.slf4jApi}"
+  runtimeOnly "org.apache.logging.log4j:log4j-core:${depVersions.log4j}"
+  runtimeOnly "org.apache.logging.log4j:log4j-slf4j-impl:${depVersions.log4j}"
+
+  testImplementation "org.junit.jupiter:junit-jupiter-api:${depVersions.junitJupiter}"
+  testImplementation "org.mockito:mockito-junit-jupiter:${depVersions.mockitoJunitJupiter}"
+  testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${depVersions.junitJupiter}"
+}
