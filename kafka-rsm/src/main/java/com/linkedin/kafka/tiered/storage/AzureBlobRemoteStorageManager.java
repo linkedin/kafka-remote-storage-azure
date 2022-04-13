@@ -27,6 +27,9 @@ import java.util.Map;
 import java.util.Objects;
 
 
+/**
+ * This class is an implementation of the KIP-405's (Tiered Storage) RemoteStorageManager interface
+ */
 public class AzureBlobRemoteStorageManager {
 
 }

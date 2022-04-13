@@ -22,3 +22,7 @@ dependencies {
   testImplementation "org.mockito:mockito-junit-jupiter:${depVersions.mockitoJunitJupiter}"
   testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${depVersions.junitJupiter}"
 }
+
+test {
+  useJUnitPlatform()
+}

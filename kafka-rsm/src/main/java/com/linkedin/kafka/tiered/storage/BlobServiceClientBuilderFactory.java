@@ -8,6 +8,9 @@ import org.slf4j.LoggerFactory;
 import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.*;
 
 
+/**
+ * This is a helper class to create {@link BlobServiceClientBuilder} from the configs.
+ */
 public class BlobServiceClientBuilderFactory {
   private static final Logger log = LoggerFactory.getLogger(BlobServiceClientBuilderFactory.class);
 
@@ -20,13 +23,23 @@ public class BlobServiceClientBuilderFactory {
       String accountName = (String) map.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT);
       String accountKey = (String) map.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY);
 
-      if (endpoint == null || accountName == null || accountKey == null) {
+      if (endpoint == null || endpoint.trim().isEmpty()
+          || accountName == null || accountName.trim().isEmpty()
+          || accountKey == null || accountKey.trim().isEmpty()) {
         String msg = String.format("For Azure storage-key authentication, blob storage endpoint, account name, and account key must be provided. "
-                                   + "endpoint = '%s', account name = '%s'", endpoint, accountName);
+                                   + "found endpoint = '%s', found account name = '%s', found account key = '%s'", endpoint, accountName, accountKey);
         throw new IllegalArgumentException(msg);
       }
 
-      String protocol = endpoint.matches("^https.*")? "https" : "http";
+      String protocol;
+      protocol = endpoint.matches("^https://.+:\\d+$")? "https" : null;
+      if (protocol == null) {
+        protocol = endpoint.matches("^http://.+:\\d+$")? "http" : null;
+      }
+      if (protocol == null) { ;
+        throw new IllegalArgumentException(String.format("Invalid endpoint '%s'", endpoint));
+      }
+
       String connectionString =
           String.format("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s/%s;", protocol, accountName,
                         accountKey, endpoint, accountName);
