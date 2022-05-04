@@ -11,14 +11,15 @@ import java.util.concurrent.Callable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assertions;
 
-import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.*;
+import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.RSM_AZURE_BLOB_STORAGE_ACCOUNT;
+import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY;
+import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.RSM_AZURE_BLOB_STORAGE_ENDPOINT;
+import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.AZURITE_ENDPOINT;
+import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.AZURITE_ACCOUNT_KEY;
+import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.AZURITE_ACCOUNT_NAME;
 
 
 public class BlobServiceClientBuilderFactoryTest {
-  final String AZURIRE_ENDPOINT = "http://127.0.0.1:10000";
-  final String AZURITE_ACCOUNT_KEY = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
-  final String AZURITE_ACCOUNT_NAME = "devstoreaccount1";
-
   private void assertException(Callable<BlobServiceClientBuilder> codeFragment, Class expectedExceptionClass) {
     try {
       codeFragment.call();
@@ -31,7 +32,7 @@ public class BlobServiceClientBuilderFactoryTest {
   @Test
   public void testRequiredKeysValidation() {
     Map<String, String> blobStorageConfigs = new HashMap<>(3);
-    blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURIRE_ENDPOINT);
+    blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURITE_ENDPOINT);
     blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT, AZURITE_ACCOUNT_NAME);
     blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY, AZURITE_ACCOUNT_KEY);
     BlobServiceClientBuilder builder = BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(blobStorageConfigs);
@@ -46,12 +47,12 @@ public class BlobServiceClientBuilderFactoryTest {
     assertException(() -> BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(blobStorageConfigs1), IllegalArgumentException.class);
 
     Map<String, String> blobStorageConfigs2 = new HashMap<>();
-    blobStorageConfigs2.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURIRE_ENDPOINT);
+    blobStorageConfigs2.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURITE_ENDPOINT);
     blobStorageConfigs2.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY, AZURITE_ACCOUNT_KEY);
     assertException(() -> BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(blobStorageConfigs2), IllegalArgumentException.class);
 
     Map<String, String> blobStorageConfigs3 = new HashMap<>();
-    blobStorageConfigs3.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURIRE_ENDPOINT);
+    blobStorageConfigs3.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURITE_ENDPOINT);
     blobStorageConfigs3.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT, AZURITE_ACCOUNT_NAME);
     assertException(() -> BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(blobStorageConfigs3), IllegalArgumentException.class);
   }
@@ -59,7 +60,7 @@ public class BlobServiceClientBuilderFactoryTest {
   @Test
   public void testEndpintUrlValidation() {
     Map<String, String> blobStorageConfigs = new HashMap<>(3);
-    blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURIRE_ENDPOINT);
+    blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURITE_ENDPOINT);
     blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT, AZURITE_ACCOUNT_NAME);
     blobStorageConfigs.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY, AZURITE_ACCOUNT_KEY);
     BlobServiceClientBuilder builder = BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(blobStorageConfigs);

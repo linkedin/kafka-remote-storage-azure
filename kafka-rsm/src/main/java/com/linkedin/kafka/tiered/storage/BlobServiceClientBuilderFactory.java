@@ -28,30 +28,28 @@ public final class BlobServiceClientBuilderFactory {
    * @return BlobServiceClientBuilder
    */
   public static BlobServiceClientBuilder getBlobServiceClientBuilder(Map<String, ?> configs) {
-    String endpoint = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ENDPOINT);
-    String accountName = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT);
-    String accountKey = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY);
+    String endpointConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ENDPOINT);
+    String accountNameConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT);
+    String accountKeyConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY);
 
-    if (endpoint == null || endpoint.trim().isEmpty()
-        || accountName == null || accountName.trim().isEmpty()
-        || accountKey == null || accountKey.trim().isEmpty()) {
+    if (endpointConfig == null || endpointConfig.trim().isEmpty()
+        || accountNameConfig == null || accountNameConfig.trim().isEmpty()
+        || accountKeyConfig == null || accountKeyConfig.trim().isEmpty()) {
       String msg = String.format("For Azure storage-key authentication, blob storage endpoint, account name, and account key must be provided. "
-                                 + "found endpoint = '%s', found account name = '%s', found account key = '%s'", endpoint, accountName, accountKey);
+                                 + "found endpoint = '%s', found account name = '%s', found account key = '%s'",
+                                 endpointConfig, accountNameConfig, accountKeyConfig);
       throw new IllegalArgumentException(msg);
     }
 
-    String protocol;
-    protocol = endpoint.matches("^https://.+:\\d+$") ? "https" : null;
-    if (protocol == null) {
-      protocol = endpoint.matches("^http://.+:\\d+$") ? "http" : null;
-    }
-    if (protocol == null) {
-      throw new IllegalArgumentException(String.format("Invalid endpoint '%s'", endpoint));
+    Endpoint endpoint = Endpoint.fromString(endpointConfig);
+    if (endpoint.isProduction() && !endpoint.isSecure()) {
+      String msg = String.format("The endpoint '%s' appears to be a production endpoint without https.", endpointConfig);
+      throw new IllegalArgumentException(msg);
     }
 
     String connectionString =
-      String.format("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s/%s;", protocol, accountName,
-                    accountKey, endpoint, accountName);
+      String.format("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s/%s;", endpoint.protocol(), accountNameConfig,
+                    accountKeyConfig, endpointConfig, accountNameConfig);
     log.info("Using connection string: {}", connectionString);
     return new BlobServiceClientBuilder().connectionString(connectionString);
   }

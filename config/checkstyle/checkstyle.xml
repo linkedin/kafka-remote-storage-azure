@@ -177,6 +177,7 @@ LinkedIn Java style.
         <!-- No imports statements using '*' notation except static imports -->
         <module name="AvoidStarImport">
             <property name="allowStaticMemberImports" value="true"/>
+            <property name="excludes" value="java.util,java.net,java.lang.Math"/>
         </module>
         <!-- Do not import 'sun' packages -->
         <module name="IllegalImport"/>
@@ -242,7 +243,7 @@ LinkedIn Java style.
         <module name="LocalFinalVariableName"/>
         <module name="LocalVariableName"/>
         <module name="MemberName">
-            <property name="format" value="^_[a-z][a-zA-Z0-9]*$"/>
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
         </module>
         <!-- Method name must be camel case starting with a lowercase letter -->
         <module name="MethodName"/>

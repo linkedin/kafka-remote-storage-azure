@@ -2,14 +2,21 @@ plugins {
   id "java"
   id "idea"
   id "checkstyle"
+  id "com.github.johnrengelman.shadow" version "7.1.2"
+}
+
+java {
+  toolchain {
+    languageVersion = JavaLanguageVersion.of(11)
+  }
 }
 
 dependencies {
   implementation "com.azure:azure-identity:${depVersions.azureIdentity}"
   implementation "com.azure:azure-storage-blob:${depVersions.azureBlobStorage}"
-  implementation "org.apache.kafka:kafka-clients:${depVersions.kafkaReleaseVersion}"
-  implementation "org.apache.kafka:kafka-storage:${depVersions.kafkaReleaseVersion}"
-  implementation "org.apache.kafka:kafka-storage-api:${depVersions.kafkaReleaseVersion}"
+  implementation "org.apache.kafka:kafka-clients:${depVersions.kafka}"
+  implementation "org.apache.kafka:kafka-storage:${depVersions.kafka}"
+  implementation "org.apache.kafka:kafka-storage-api:${depVersions.kafka}"
   implementation "io.dropwizard.metrics:metrics-core:${depVersions.dropwizardMetrics}"
 
   // Tests use slf4j logging api with log4j2 backend.
@@ -22,6 +29,35 @@ dependencies {
   testImplementation "org.junit.jupiter:junit-jupiter-api:${depVersions.junitJupiter}"
   testImplementation "org.mockito:mockito-junit-jupiter:${depVersions.mockitoJunitJupiter}"
   testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${depVersions.junitJupiter}"
+}
+
+// This task creates the jar file to be loaded with kafka-server 3.0.
+// Note that this task excludes kafka and log4j (impl) dependencies from the jar
+// as they are provided by kafka-server proper.
+shadowJar {
+  archiveBaseName = "azure-kafka-${depVersions.kafka}-rsm"
+  archiveClassifier = "shadow"
+
+  dependencies {
+    exclude(dependency("org.apache.kafka:kafka-server-common"))
+    exclude(dependency("org.apache.kafka:kafka-storage"))
+    exclude(dependency("org.apache.kafka:kafka-storage-api"))
+    exclude(dependency("org.apache.kafka:kafka-clients"))
+    exclude(dependency("org.apache.logging.log4j:log4j-slf4j-impl"))
+  }
+}
+
+jar {
+  archiveClassifier = "all"
+  archiveBaseName = "azure-kafka-${depVersions.kafka}-rsm"
+  duplicatesStrategy = DuplicatesStrategy.INCLUDE
+  from {
+    configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+  } {
+    exclude "META-INF/*.SF"
+    exclude "META-INF/*.DSA"
+    exclude "META-INF/*.RSA"
+  }
 }
 
 test {
