@@ -10,13 +10,9 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.util.stream.Collectors;
-import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.log.remote.storage.LogSegmentData;
 import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentMetadata;
-import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentId;
 import org.apache.kafka.server.log.remote.storage.RemoteStorageManager;
 import org.apache.kafka.server.log.remote.storage.RemoteResourceNotFoundException;
 import org.junit.jupiter.api.AfterAll;
@@ -43,22 +39,11 @@ public class AzureBlobRemoteStorageManagerTest {
       String.format("DefaultEndpointsProtocol=http;AccountName=%s;AccountKey=%s;BlobEndpoint=%s/%s;",
                     AZURITE_ACCOUNT_NAME, AZURITE_ACCOUNT_KEY, AZURITE_ENDPOINT, AZURITE_ACCOUNT_NAME);
 
-  private static final TopicPartition TOPIC_PARTITION = new TopicPartition("foo", 1);
   private static final File DIR = TieredStorageTestUtils.tempDirectory("azure-rsm-");
   private static final Random RANDOM = new Random();
-  private static final Map<String, ?> AZURITE_CONFIG = getAzuriteConfig();
+  private static final Map<String, ?> AZURITE_CONFIG = TieredStorageTestUtils.getAzuriteConfig();
 
   private static Process azuriteProcess = null;
-
-  private static Map<String, ?> getAzuriteConfig() {
-    final Map<String, Object> map = new HashMap<>();
-
-    map.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT, AZURITE_ACCOUNT_NAME);
-    map.put(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY, AZURITE_ACCOUNT_KEY);
-    map.put(RSM_AZURE_BLOB_STORAGE_ENDPOINT, AZURITE_ENDPOINT);
-
-    return map;
-  }
 
   private static void cleanUpAzurite() {
     BlobServiceClientBuilder builder = new BlobServiceClientBuilder();
@@ -69,10 +54,7 @@ public class AzureBlobRemoteStorageManagerTest {
   }
 
   private static RemoteLogSegmentMetadata createRemoteLogSegmentMetadata() {
-    TopicIdPartition topicPartition = new TopicIdPartition(Uuid.randomUuid(), TOPIC_PARTITION);
-    RemoteLogSegmentId id = new RemoteLogSegmentId(topicPartition, Uuid.randomUuid());
-    return new RemoteLogSegmentMetadata(id, 100L, 200L, System.currentTimeMillis(), 0,
-                                        System.currentTimeMillis(), 100, Collections.singletonMap(1, 100L));
+    return TieredStorageTestUtils.createRemoteLogSegmentMetadata("foo", 1);
   }
 
   private static void matchBytes(InputStream segmentStream, Path path) throws IOException {
@@ -194,13 +176,13 @@ public class AzureBlobRemoteStorageManagerTest {
 
     // Check that the segment exists in the RSM.
     boolean containsSegment =
-        remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.generateKeyForSegment(segmentMetadata));
+        remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.getBlobNameForSegment(segmentMetadata));
     assertTrue(containsSegment);
 
     // Check that the indexes exist in the RSM.
     for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
       boolean containsIndex =
-          remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.generateKeyForIndex(segmentMetadata, indexType));
+          remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.getBlobNameForIndex(segmentMetadata, indexType));
       assertTrue(containsIndex);
     }
   }
@@ -218,7 +200,7 @@ public class AzureBlobRemoteStorageManagerTest {
 
     // Check that the segment exists in the RSM.
     boolean containsSegment =
-        remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.generateKeyForSegment(segmentMetadata));
+        remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.getBlobNameForSegment(segmentMetadata));
     assertTrue(containsSegment);
 
     // Check that the indexes exist in the RSM.
@@ -227,7 +209,7 @@ public class AzureBlobRemoteStorageManagerTest {
         continue;
       }
       boolean containsIndex =
-          remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.generateKeyForIndex(segmentMetadata, indexType));
+          remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.getBlobNameForIndex(segmentMetadata, indexType));
       assertTrue(containsIndex);
     }
   }

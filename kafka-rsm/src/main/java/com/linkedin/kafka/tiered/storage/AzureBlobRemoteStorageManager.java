@@ -19,8 +19,9 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.server.log.remote.storage.LogSegmentData;
 import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentMetadata;
 import org.apache.kafka.server.log.remote.storage.RemoteResourceNotFoundException;
@@ -38,7 +39,8 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
   private static final String WRITE_LATENCY_MILLIS = "WRITE_LATENCY_MILLIS";
   private static final String BYTES_OUT_RATE = "BYTES_OUT_RATE";
 
-  private BlobServiceClient blobServiceClient = null;
+  private ContainerNameEncoder containerNameEncoder;
+  private BlobServiceClient blobServiceClient;
   private final MetricRegistry metricRegistry = new MetricRegistry();
   private final Timer writeLatencyTimer = metricRegistry.timer(WRITE_LATENCY_MILLIS);
   private final Meter bytesOutRateMeter = metricRegistry.meter(BYTES_OUT_RATE);
@@ -54,8 +56,9 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     for (Map.Entry<String, ?> entry: configs.entrySet()) {
       log.info("{}: {} ", entry.getKey(), entry.getValue());
     }
+    containerNameEncoder = new ContainerNameEncoder(RemoteStorageManagerDefaults.getOrDefaultContainerNamePrefix(configs));
+    blobServiceClient = BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(configs).buildClient();
 
-    this.blobServiceClient = BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(configs).buildClient();
     ConsoleReporter reporter = ConsoleReporter.forRegistry(metricRegistry).build();
     reporter.start(600, TimeUnit.SECONDS);
     reporter.report();
@@ -91,7 +94,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
   }
 
   private BlobContainerClient getContainerClient(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
-    String directoryName = getTopicPartitionFolderName(remoteLogSegmentMetadata);
+    String directoryName = getContainerName(remoteLogSegmentMetadata);
     BlobContainerClient blobContainerClient = blobServiceClient.getBlobContainerClient(directoryName);
     return blobContainerClient;
   }
@@ -102,21 +105,27 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     return blockBlobClient.exists();
   }
 
-  static String generateKeyForSegment(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
-    return remoteLogSegmentMetadata.remoteLogSegmentId().id().toString() + ".segment";
+  static String getBlobNameForSegment(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
+    return getBlobName(remoteLogSegmentMetadata, "SEGMENT");
   }
 
-  static String generateKeyForIndex(RemoteLogSegmentMetadata remoteLogSegmentMetadata, IndexType indexType) {
-    return remoteLogSegmentMetadata.remoteLogSegmentId().id().toString() + "." + indexType.toString();
+  static String getBlobNameForIndex(RemoteLogSegmentMetadata remoteLogSegmentMetadata, IndexType indexType) {
+    return getBlobName(remoteLogSegmentMetadata, indexType.toString());
   }
 
-  static String getTopicPartitionFolderName(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
-    final TopicIdPartition topicIdPartition = remoteLogSegmentMetadata.remoteLogSegmentId().topicIdPartition();
-    String folderName = "topic" + topicIdPartition.topicId()
-                        + "partition" + topicIdPartition.topicPartition();
-    folderName = folderName.replaceAll("[^a-zA-Z0-9]", "");
-    folderName = folderName.toLowerCase();
-    return folderName.toLowerCase();
+  static String getBlobName(RemoteLogSegmentMetadata remoteLogSegmentMetadata, String suffix) {
+    // Azure blob name requirements
+    // https://docs.microsoft.com/en-us/rest/api/storageservices/naming-and-referencing-containers--blobs--and-metadata#blob-names
+    int partition = remoteLogSegmentMetadata.remoteLogSegmentId().topicIdPartition().topicPartition().partition();
+    // kafka.common.Uuid.toString() uses Base64 encoding, which may contain '/' and '+'. They are valid in blob names.
+    // However, we use canonical UUID naming for simplicity.
+    Uuid id = remoteLogSegmentMetadata.remoteLogSegmentId().id();
+    String logSegmentId = new UUID(id.getMostSignificantBits(), id.getLeastSignificantBits()).toString();
+    return String.format("%d.%s.%s", partition, logSegmentId, suffix);
+  }
+
+  public String getContainerName(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
+    return containerNameEncoder.encode(remoteLogSegmentMetadata);
   }
 
   @Override
@@ -140,7 +149,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
       log.debug("Container already exists {}", blobContainerName);
     }
 
-    final String segmentKey = generateKeyForSegment(remoteLogSegmentMetadata);
+    final String segmentKey = getBlobNameForSegment(remoteLogSegmentMetadata);
     BlockBlobClient blockBlobClient = blobContainerClient.getBlobClient(segmentKey).getBlockBlobClient();
 
     if (blockBlobClient.exists()) {
@@ -152,21 +161,21 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     try {
       int segmentBytes = uploadToAzureBlob(blobContainerClient, segmentKey, Files.readAllBytes(logSegmentData.logSegment()));
       int leaderEpochIndexBytes = uploadToAzureBlob(blobContainerClient,
-                                                    generateKeyForIndex(remoteLogSegmentMetadata, IndexType.LEADER_EPOCH),
+                                                    getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.LEADER_EPOCH),
                                                     logSegmentData.leaderEpochIndex().array());
       int logSegmentBytes = uploadToAzureBlob(blobContainerClient,
-                                              generateKeyForIndex(remoteLogSegmentMetadata, IndexType.PRODUCER_SNAPSHOT),
+                                              getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.PRODUCER_SNAPSHOT),
                                               Files.readAllBytes(logSegmentData.producerSnapshotIndex()));
       int offsetIndexBytes = uploadToAzureBlob(blobContainerClient,
-                                               generateKeyForIndex(remoteLogSegmentMetadata, IndexType.OFFSET),
+                                               getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.OFFSET),
                                                Files.readAllBytes(logSegmentData.offsetIndex()));
       int timeIndexBytes = uploadToAzureBlob(blobContainerClient,
-                                             generateKeyForIndex(remoteLogSegmentMetadata, IndexType.TIMESTAMP),
+                                             getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.TIMESTAMP),
                                              Files.readAllBytes(logSegmentData.timeIndex()));
 
       if (logSegmentData.transactionIndex().isPresent()) {
         uploadToAzureBlob(blobContainerClient,
-                          generateKeyForIndex(remoteLogSegmentMetadata, IndexType.TRANSACTION),
+                          getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.TRANSACTION),
                           Files.readAllBytes(logSegmentData.transactionIndex().get()));
       }
 
@@ -193,8 +202,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     if (remoteLogSegmentMetadata == null) {
       throw new NullPointerException("RemoteLogSegmentMetadata must be non-null");
     }
-    log.debug("Received fetch segment request from [{}-{}] for segment {}",
-              startPosition, endPosition, remoteLogSegmentMetadata);
+    log.debug("Received fetch segment request from [{}-{}] for segment {}", startPosition, endPosition, remoteLogSegmentMetadata);
 
     if (startPosition < 0 || endPosition < 0) {
       throw new IllegalArgumentException("Start position and end position must >= 0");
@@ -204,7 +212,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
       throw new IllegalArgumentException("End position must be greater than or equal to the start position");
     }
 
-    String segmentKey = generateKeyForSegment(remoteLogSegmentMetadata);
+    String segmentKey = getBlobNameForSegment(remoteLogSegmentMetadata);
     BlobContainerClient blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
     byte[] segmentBytes;
     // Read the entire log segment
@@ -238,7 +246,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
       throw new NullPointerException(String.format("indexType must be non-null for remote log segment %s", remoteLogSegmentMetadata));
     }
 
-    String indexKey = generateKeyForIndex(remoteLogSegmentMetadata, indexType);
+    String indexKey = getBlobNameForIndex(remoteLogSegmentMetadata, indexType);
     BlobContainerClient blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
     byte[] index = fetchBlob(blobContainerClient, indexKey);
 

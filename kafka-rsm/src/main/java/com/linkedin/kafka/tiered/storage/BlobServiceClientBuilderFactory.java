@@ -28,9 +28,9 @@ public final class BlobServiceClientBuilderFactory {
    * @return BlobServiceClientBuilder
    */
   public static BlobServiceClientBuilder getBlobServiceClientBuilder(Map<String, ?> configs) {
-    String endpointConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ENDPOINT);
-    String accountNameConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT);
-    String accountKeyConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY);
+    String endpointConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ENDPOINT_PROP);
+    String accountNameConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_PROP);
+    String accountKeyConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY_PROP);
 
     if (endpointConfig == null || endpointConfig.trim().isEmpty()
         || accountNameConfig == null || accountNameConfig.trim().isEmpty()
