@@ -12,11 +12,13 @@ import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
+import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -66,10 +68,19 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
 
   private int uploadToAzureBlob(final BlobContainerClient blobContainerClient, final String fileName, byte[] data) throws IOException {
     BlockBlobClient blockBlobClient = blobContainerClient.getBlobClient(fileName).getBlockBlobClient();
-    InputStream inputStream = new ByteArrayInputStream(data);
-    blockBlobClient.upload(inputStream, data.length, true);
-    inputStream.close();
+    try (InputStream inputStream = new ByteArrayInputStream(data)) {
+      blockBlobClient.upload(inputStream, data.length, true);
+    }
     return data.length;
+  }
+
+  private long uploadToAzureBlob(final BlobContainerClient blobContainerClient, final String fileName, Path inputFile) throws IOException {
+    long size = Files.size(inputFile);
+    BlockBlobClient blockBlobClient = blobContainerClient.getBlobClient(fileName).getBlockBlobClient();
+    try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(inputFile))) {
+      blockBlobClient.upload(inputStream, Files.size(inputFile), true);
+    }
+    return size;
   }
 
   private byte[] fetchBlob(final BlobContainerClient blobContainerClient, final String fileName) throws RemoteResourceNotFoundException {
@@ -159,28 +170,28 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
 
     Timer.Context timeContext = writeLatencyTimer.time();
     try {
-      int segmentBytes = uploadToAzureBlob(blobContainerClient, segmentKey, Files.readAllBytes(logSegmentData.logSegment()));
-      int leaderEpochIndexBytes = uploadToAzureBlob(blobContainerClient,
+      long segmentBytes = uploadToAzureBlob(blobContainerClient, segmentKey, logSegmentData.logSegment());
+      long leaderEpochIndexBytes = uploadToAzureBlob(blobContainerClient,
                                                     getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.LEADER_EPOCH),
                                                     logSegmentData.leaderEpochIndex().array());
-      int logSegmentBytes = uploadToAzureBlob(blobContainerClient,
+      long producerSnapshotBytes = uploadToAzureBlob(blobContainerClient,
                                               getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.PRODUCER_SNAPSHOT),
-                                              Files.readAllBytes(logSegmentData.producerSnapshotIndex()));
-      int offsetIndexBytes = uploadToAzureBlob(blobContainerClient,
+                                              logSegmentData.producerSnapshotIndex());
+      long offsetIndexBytes = uploadToAzureBlob(blobContainerClient,
                                                getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.OFFSET),
-                                               Files.readAllBytes(logSegmentData.offsetIndex()));
-      int timeIndexBytes = uploadToAzureBlob(blobContainerClient,
+                                               logSegmentData.offsetIndex());
+      long timeIndexBytes = uploadToAzureBlob(blobContainerClient,
                                              getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.TIMESTAMP),
-                                             Files.readAllBytes(logSegmentData.timeIndex()));
+                                             logSegmentData.timeIndex());
 
       if (logSegmentData.transactionIndex().isPresent()) {
         uploadToAzureBlob(blobContainerClient,
                           getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.TRANSACTION),
-                          Files.readAllBytes(logSegmentData.transactionIndex().get()));
+                          logSegmentData.transactionIndex().get());
       }
 
       log.debug("Writing remote log segment completed for {}", remoteLogSegmentMetadata);
-      bytesOutRateMeter.mark(segmentBytes + leaderEpochIndexBytes + logSegmentBytes + offsetIndexBytes + timeIndexBytes);
+      bytesOutRateMeter.mark(segmentBytes + leaderEpochIndexBytes + producerSnapshotBytes + offsetIndexBytes + timeIndexBytes);
     } catch (Exception e) {
       throw new RemoteStorageException(e);
     } finally {
