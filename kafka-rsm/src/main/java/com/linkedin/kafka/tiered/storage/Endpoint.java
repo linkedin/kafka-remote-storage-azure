@@ -10,10 +10,18 @@ import java.util.regex.Pattern;
 
 
 public class Endpoint {
-  // Some valid strings that match this regex
-  // azurite: http://127.0.0.1:10000
-  // private endpoint: https://accountname.blob.core.windows.net
-  public static final String BLOB_ENDPOINT_REGEX_PATTERN = "(^https?)://([^:]+)(:?)(\\d+$)?";
+  /* Some valid strings that match this regex
+    azurite: http://127.0.0.1:10000
+    private endpoint: https://accountname.blob.core.windows.net
+    The regex goes like this -
+    1. http or https at the start of string ^(https?) (first capturing group)
+    2. ://
+    3. group of characters other than a : ([^:]+) (second capturing group for hostname)
+    4. an optional non-capturing group that starts with : followed by one or more digits
+       and is at the end of the string (?::(\d+))?$
+       This group nests another capturing group for the group of digits.
+   */
+  public static final String BLOB_ENDPOINT_REGEX_PATTERN = "^(https?)://([^:]+)(?::(\\d+))?$";
 
   private final String protocol;
   private final String host;
@@ -41,10 +49,10 @@ public class Endpoint {
     Pattern pattern = Pattern.compile(BLOB_ENDPOINT_REGEX_PATTERN);
     Matcher matcher = pattern.matcher(endpointConfig);
     if (matcher.matches()) {
-      if (matcher.groupCount() == 2) {
+      if (matcher.group(3) == null) {
         return new Endpoint(matcher.group(1).trim(), matcher.group(2).trim(), null);
-      } else if (matcher.groupCount() == 4) {
-        return new Endpoint(matcher.group(1).trim(), matcher.group(2).trim(), matcher.group(4).trim());
+      } else {
+        return new Endpoint(matcher.group(1).trim(), matcher.group(2).trim(), matcher.group(3).trim());
       }
     }
     throw new IllegalArgumentException(String.format("Invalid blob endpoint '%s'", endpointConfig));
