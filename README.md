@@ -11,7 +11,7 @@ To build the shadow jar run the following.
 # Using the Remote Storage Manager plugin
 Include the plugin jar file in the classpath before running kafka-server.
 ```bash
-CLASSPATH=/path/to/azure-kafka-3.0.0-rsm-shadow.jar bin/kafka-server-start.sh kafka-server.ssl.azurite.properties
+CLASSPATH=/path/to/kafka-azure-rsm-<version>-all.jar bin/kafka-server-start.sh kafka-server.ssl.azurite.properties
 ```
 
 Sample kafka-server configurations are provided below for local azurite connectivity

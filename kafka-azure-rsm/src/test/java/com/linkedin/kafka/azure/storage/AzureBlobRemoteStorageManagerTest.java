@@ -2,7 +2,7 @@
  * Copyright 2022 LinkedIn Corp. Licensed under the BSD 2-Clause License (the "License"). See License in the project root for license information.
  */
 
-package com.linkedin.kafka.tiered.storage;
+package com.linkedin.kafka.azure.storage;
 
 import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
@@ -29,7 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
-import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.*;
+import static com.linkedin.kafka.azure.storage.RemoteStorageManagerDefaults.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class AzureBlobRemoteStorageManagerTest {

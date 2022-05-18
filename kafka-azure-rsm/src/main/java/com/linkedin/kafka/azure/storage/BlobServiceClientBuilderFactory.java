@@ -2,14 +2,14 @@
  * Copyright 2022 LinkedIn Corp. Licensed under the BSD 2-Clause License (the "License"). See License in the project root for license information.
  */
 
-package com.linkedin.kafka.tiered.storage;
+package com.linkedin.kafka.azure.storage;
 
 import com.azure.storage.blob.BlobServiceClientBuilder;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.linkedin.kafka.tiered.storage.RemoteStorageManagerDefaults.*;
+import static com.linkedin.kafka.azure.storage.RemoteStorageManagerDefaults.*;
 
 
 /**

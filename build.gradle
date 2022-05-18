@@ -1,7 +1,3 @@
-group = "com.linkedin.kafka.tiered.storage"
-
-version = "0.0.1"
-
 wrapper {
   gradleVersion = "7.3.3"
 }

@@ -3,6 +3,7 @@ plugins {
   id "idea"
   id "checkstyle"
   id "com.github.johnrengelman.shadow" version "7.1.2"
+  id "maven-publish"
 }
 
 java {
@@ -33,32 +34,59 @@ dependencies {
 }
 
 // This task creates the jar file to be loaded with kafka-server 3.0.
-// Note that this task excludes kafka and log4j (impl) dependencies from the jar
-// as they are provided by kafka-server proper.
+// Note that this task excludes kafka, slf4j and log4j dependencies from the jar
+// as they are provided by kafka-server proper. The artifact will have '-all' as a suffix,
+// indicating that it is a fat JAR, and to keep the option of having
+// a lean JAR in the future open.
 shadowJar {
-  archiveBaseName = "azure-kafka-${depVersions.kafka}-rsm"
-  archiveClassifier = "shadow"
-
   dependencies {
     exclude(dependency("org.apache.kafka:kafka-server-common"))
     exclude(dependency("org.apache.kafka:kafka-storage"))
     exclude(dependency("org.apache.kafka:kafka-storage-api"))
     exclude(dependency("org.apache.kafka:kafka-clients"))
+
+    exclude(dependency("org.apache.logging.log4j:log4j-core"))
+    exclude(dependency("org.apache.logging.log4j:log4j-api"))
+    exclude(dependency("org.slf4j:slf4j-api"))
     exclude(dependency("org.apache.logging.log4j:log4j-slf4j-impl"))
   }
 }
+assemble.dependsOn(shadowJar)
 
-jar {
-  archiveClassifier = "all"
-  archiveBaseName = "azure-kafka-${depVersions.kafka}-rsm"
-  duplicatesStrategy = DuplicatesStrategy.INCLUDE
-  from {
-    configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
-  } {
-    exclude "META-INF/*.SF"
-    exclude "META-INF/*.DSA"
-    exclude "META-INF/*.RSA"
+ext {
+  jfrogUsername = System.getenv('JFROG_USERNAME')
+  jfrogApiKey = System.getenv('JFROG_API_KEY')
+
+  // By default, publish to JFrog.
+  mavenUrl = project.hasProperty('mavenUrl') ? project.mavenUrl : jfrogRepoUrl
+  mavenUsername = project.hasProperty('mavenUsername') ? project.mavenUsername : jfrogUsername
+  mavenPassword = project.hasProperty('mavenPassword') ? project.mavenPassword : jfrogApiKey
+}
+
+publishing {
+  repositories {
+    // To test locally, invoke gradlew with `-PmavenUrl=file:///some/local/path`
+    maven {
+      url = mavenUrl
+      credentials {
+        username = mavenUsername
+        password = mavenPassword
+      }
+    }
   }
+
+  publications {
+    shadow(MavenPublication) { publication ->
+      // default groupId is picked up from project's group,
+      // default artifactId is project.name
+      // version is project.version (semantic versioning)
+      project.shadow.component(publication)
+    }
+  }
+}
+publishToMavenLocal.dependsOn(assemble)
+task('install') {
+  dependsOn(publishToMavenLocal)
 }
 
 test {
