@@ -10,6 +10,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.util.stream.Collectors;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.log.remote.storage.LogSegmentData;
 import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentMetadata;
@@ -332,6 +333,56 @@ public class AzureBlobRemoteStorageManagerTest {
     // Check that all the indexes are not found.
     for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
       assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchIndex(segmentMetadata, indexType));
+    }
+  }
+
+  @Test
+  public void testDeletingOneSegmentDoesNotDeleteOtherSegments() throws Exception {
+    RemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
+    remoteStorageManager.configure(AZURITE_CONFIG);
+
+    final Uuid topicId = Uuid.randomUuid();
+    final int leaderEpochStartOffset = 0;
+    RemoteLogSegmentMetadata segment1Metadata =
+        TieredStorageTestUtils.createRemoteLogSegmentMetadata("foo", 0, topicId, 0, 99, leaderEpochStartOffset);
+    LogSegmentData logSegment1Data = createLogSegmentData();
+
+    // Copy the first log segment.
+    remoteStorageManager.copyLogSegmentData(segment1Metadata, logSegment1Data);
+
+    RemoteLogSegmentMetadata segment2Metadata =
+        TieredStorageTestUtils.createRemoteLogSegmentMetadata("foo", 0, topicId, 100, 199, leaderEpochStartOffset);
+    LogSegmentData logSegment2Data = createLogSegmentData();
+    // Copy the second log segment.
+    remoteStorageManager.copyLogSegmentData(segment2Metadata, logSegment2Data);
+
+    // Check that the copied first segment exists in rsm and it is same.
+    try (InputStream segmentStream = remoteStorageManager.fetchLogSegment(segment1Metadata, 0)) {
+      matchBytes(segmentStream, logSegment1Data.logSegment());
+    }
+
+    // Check that the copied second segment exists in rsm and it is same.
+    try (InputStream segmentStream = remoteStorageManager.fetchLogSegment(segment2Metadata, 0)) {
+      matchBytes(segmentStream, logSegment2Data.logSegment());
+    }
+
+    // Delete the first segment and check that it does not exist in RSM.
+    remoteStorageManager.deleteLogSegmentData(segment1Metadata);
+
+    // Check that the segment data does not exist.
+    assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segment1Metadata, 0));
+
+    // Check that the segment data does not exist for range.
+    assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segment1Metadata, 0, 1));
+
+    // Check that all the indexes are not found.
+    for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
+      assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchIndex(segment1Metadata, indexType));
+    }
+
+    // Check that the copied second segment exists in rsm and it is same.
+    try (InputStream segmentStream = remoteStorageManager.fetchLogSegment(segment2Metadata, 0)) {
+      matchBytes(segmentStream, logSegment2Data.logSegment());
     }
   }
 }

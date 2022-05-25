@@ -102,6 +102,24 @@ public final class TieredStorageTestUtils {
                                         System.currentTimeMillis(), 100, Collections.singletonMap(1, 100L));
   }
 
+  /**
+   * Create RemoteLogSegmentMetadata from topicname and partition
+   * @param topic topicname
+   * @param partition partition number
+   * @param topicId Topic Uuid
+   * @param segmentStartOffset start offset of the segment
+   * @param segmentEndOffset end offset of the segment
+   * @param leaderEpochStartOffset The leader epoch start offset
+   * @return A valid RemoteLogSegmentMetadata
+   */
+  public static RemoteLogSegmentMetadata createRemoteLogSegmentMetadata(
+      String topic, int partition, Uuid topicId, long segmentStartOffset, long segmentEndOffset, long leaderEpochStartOffset) {
+    TopicIdPartition topicPartition = new TopicIdPartition(topicId, new TopicPartition(topic, partition));
+    RemoteLogSegmentId id = new RemoteLogSegmentId(topicPartition, Uuid.randomUuid());
+    return new RemoteLogSegmentMetadata(id, segmentStartOffset, segmentEndOffset, System.currentTimeMillis(), 0,
+                                        System.currentTimeMillis(), 100, Collections.singletonMap(1, leaderEpochStartOffset));
+  }
+
   public static int randomPartition() {
     return RANDOM.nextInt() % 1000;
   }

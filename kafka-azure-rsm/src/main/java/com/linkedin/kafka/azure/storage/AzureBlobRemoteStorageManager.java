@@ -4,9 +4,10 @@
 
 package com.linkedin.kafka.azure.storage;
 
-import com.azure.core.util.Context;
+import com.azure.storage.blob.BlobClient;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClient;
+import com.azure.storage.blob.models.BlobStorageException;
 import com.azure.storage.blob.specialized.BlockBlobClient;
 import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.Meter;
@@ -37,7 +38,7 @@ import org.slf4j.LoggerFactory;
  * This class is an implementation of the KIP-405's (Tiered Storage) RemoteStorageManager interface
  */
 public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
-  private static final Logger log = LoggerFactory.getLogger(AzureBlobRemoteStorageManager.class);
+  private static final Logger LOG = LoggerFactory.getLogger(AzureBlobRemoteStorageManager.class);
   private static final String WRITE_LATENCY_MILLIS = "WRITE_LATENCY_MILLIS";
   private static final String BYTES_OUT_RATE = "BYTES_OUT_RATE";
 
@@ -49,14 +50,14 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
 
   @Override
   public void close() {
-    log.info("Shutting down {}", this.getClass().getSimpleName());
+    LOG.info("Shutting down {}", this.getClass().getSimpleName());
   }
 
   @Override
   public void configure(Map<String, ?> configs) {
-    log.info("Setting up {} with configs: ", this.getClass().getSimpleName());
+    LOG.info("Setting up {} with configs: ", this.getClass().getSimpleName());
     for (Map.Entry<String, ?> entry: configs.entrySet()) {
-      log.info("{}: {} ", entry.getKey(), entry.getValue());
+      LOG.info("{}: {} ", entry.getKey(), entry.getValue());
     }
     containerNameEncoder = new ContainerNameEncoder(RemoteStorageManagerDefaults.getOrDefaultContainerNamePrefix(configs));
     blobServiceClient = BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(configs).buildClient();
@@ -105,9 +106,8 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
   }
 
   private BlobContainerClient getContainerClient(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
-    String directoryName = getContainerName(remoteLogSegmentMetadata);
-    BlobContainerClient blobContainerClient = blobServiceClient.getBlobContainerClient(directoryName);
-    return blobContainerClient;
+    String containerName = getContainerName(remoteLogSegmentMetadata);
+    return blobServiceClient.getBlobContainerClient(containerName);
   }
 
   boolean containsFile(RemoteLogSegmentMetadata remoteLogSegmentMetadata, String fileName) {
@@ -142,7 +142,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
   @Override
   public void copyLogSegmentData(RemoteLogSegmentMetadata remoteLogSegmentMetadata,
                                  LogSegmentData logSegmentData) throws RemoteStorageException {
-    log.debug("Writing remote log segment started for {}", remoteLogSegmentMetadata);
+    LOG.debug("Writing remote log segment started for {}", remoteLogSegmentMetadata);
 
     if (remoteLogSegmentMetadata == null) {
       throw new NullPointerException("remoteLogSegmentMetadata must be non-null");
@@ -154,10 +154,10 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
 
     final String blobContainerName = blobContainerClient.getBlobContainerName();
     if (!blobContainerClient.exists()) {
-      log.debug("Creating container {}", blobContainerName);
+      LOG.debug("Creating container {}", blobContainerName);
       blobContainerClient.create();
     } else {
-      log.debug("Container already exists {}", blobContainerName);
+      LOG.debug("Container already exists {}", blobContainerName);
     }
 
     final String segmentKey = getBlobNameForSegment(remoteLogSegmentMetadata);
@@ -190,7 +190,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
                           logSegmentData.transactionIndex().get());
       }
 
-      log.debug("Writing remote log segment completed for {}", remoteLogSegmentMetadata);
+      LOG.debug("Writing remote log segment completed for {}", remoteLogSegmentMetadata);
       bytesOutRateMeter.mark(segmentBytes + leaderEpochIndexBytes + producerSnapshotBytes + offsetIndexBytes + timeIndexBytes);
     } catch (Exception e) {
       throw new RemoteStorageException(e);
@@ -213,7 +213,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     if (remoteLogSegmentMetadata == null) {
       throw new NullPointerException("RemoteLogSegmentMetadata must be non-null");
     }
-    log.debug("Received fetch segment request from [{}-{}] for segment {}", startPosition, endPosition, remoteLogSegmentMetadata);
+    LOG.debug("Received fetch segment request from [{}-{}] for segment {}", startPosition, endPosition, remoteLogSegmentMetadata);
 
     if (startPosition < 0 || endPosition < 0) {
       throw new IllegalArgumentException("Start position and end position must >= 0");
@@ -228,7 +228,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     byte[] segmentBytes;
     // Read the entire log segment
     segmentBytes = fetchBlob(blobContainerClient, segmentKey);
-    log.debug("Fetched remote log segment {} of length {}", remoteLogSegmentMetadata, segmentBytes.length);
+    LOG.debug("Fetched remote log segment {} of length {}", remoteLogSegmentMetadata, segmentBytes.length);
 
     if (startPosition >= segmentBytes.length) {
       throw new IllegalArgumentException(
@@ -249,7 +249,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
   @Override
   public InputStream fetchIndex(RemoteLogSegmentMetadata remoteLogSegmentMetadata,
                                 IndexType indexType) throws RemoteStorageException {
-    log.debug("Fetching index type {} and segment {}", indexType, remoteLogSegmentMetadata);
+    LOG.debug("Fetching index type {} and segment {}", indexType, remoteLogSegmentMetadata);
     if (remoteLogSegmentMetadata == null) {
       throw new NullPointerException("RemoteLogSegmentMetadata can be non-null");
     }
@@ -270,23 +270,44 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     return new ByteArrayInputStream(index);
   }
 
+  private void deleteBlob(RemoteLogSegmentMetadata remoteLogSegmentMetadata, BlobContainerClient blobContainerClient, String blobName)
+      throws RemoteStorageException {
+    final String containerName = blobContainerClient.getBlobContainerName();
+    try {
+      blobContainerClient.getBlobClient(blobName).delete();
+    } catch (BlobStorageException ex) {
+      LOG.error("Failure during deletion of blob {} in container {} for remote log segment {}. Status Code = {}, Error code = {}",
+                blobName, containerName, remoteLogSegmentMetadata, ex.getStatusCode(), ex.getErrorCode());
+      throw new RemoteStorageException(ex);
+    }
+  }
+
   @Override
   public void deleteLogSegmentData(RemoteLogSegmentMetadata remoteLogSegmentMetadata) throws RemoteStorageException {
     Objects.requireNonNull(remoteLogSegmentMetadata, "remoteLogSegmentMetadata can not be null");
 
-    try {
-      log.debug("Deleting log segment {}", remoteLogSegmentMetadata);
-      BlobContainerClient blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
+    BlobContainerClient blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
+    final String containerName = blobContainerClient.getBlobContainerName();
+    LOG.debug("Started deletion of blobs in container {} for the remote log segment {}", containerName, remoteLogSegmentMetadata);
+    deleteBlob(remoteLogSegmentMetadata, blobContainerClient, getBlobNameForSegment(remoteLogSegmentMetadata));
 
-      // Make sure the container is deleted before we exit
-      while (blobContainerClient.exists()) {
-        blobContainerClient.deleteWithResponse(null, null, Context.NONE).getValue();
-        blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
+    for (IndexType indexType: IndexType.values()) {
+      String indexBlob = getBlobNameForIndex(remoteLogSegmentMetadata, indexType);
+
+      // In linkedin we don't use Kafka transactions but there should be a better way
+      // to detect if the transaction index was ever created or not.
+      // Perhaps RemoteLogSegmentMetadata should include a byte[] for arbitrary data.
+      if (indexType == IndexType.TRANSACTION) {
+        BlobClient blobClient = blobContainerClient.getBlobClient(indexBlob);
+        if (blobClient.exists()) {
+          deleteBlob(remoteLogSegmentMetadata, blobContainerClient, getBlobNameForIndex(remoteLogSegmentMetadata, indexType));
+        }
+      } else {
+        // Delete blobs other than txnIndex unconditionally because we expect them to be present modulo copy errors.
+        deleteBlob(remoteLogSegmentMetadata, blobContainerClient, getBlobNameForIndex(remoteLogSegmentMetadata, indexType));
       }
-    } catch (Exception e) {
-      throw new RemoteStorageException(e);
     }
 
-    log.debug("Deleted log segment {}", remoteLogSegmentMetadata);
+    LOG.debug("Deleted blobs in container {} for the remote log segment {}", containerName, remoteLogSegmentMetadata);
   }
 }
