@@ -39,6 +39,7 @@ dependencies {
 // indicating that it is a fat JAR, and to keep the option of having
 // a lean JAR in the future open.
 shadowJar {
+  archiveClassifier = 'shadow'
   dependencies {
     exclude(dependency("org.apache.kafka:kafka-server-common"))
     exclude(dependency("org.apache.kafka:kafka-storage"))
@@ -50,6 +51,8 @@ shadowJar {
     exclude(dependency("org.slf4j:slf4j-api"))
     exclude(dependency("org.apache.logging.log4j:log4j-slf4j-impl"))
   }
+  from "$rootDir/LICENSE"
+  from "$rootDir/NOTICE"
 }
 assemble.dependsOn(shadowJar)
 
@@ -81,9 +84,16 @@ publishing {
       // default artifactId is project.name
       // version is project.version (semantic versioning)
       project.shadow.component(publication)
+      pom.withXml {
+        def root = asNode()
+        root.appendNode('name', 'kafka-azure-rsm')
+        root.appendNode('description', 'Kafka Remote Storage Manager that uses Azure Blob Storage as remote storage backend.')
+        root.children().last() + rootProject.ext.pomConfig
+      }
     }
   }
 }
+publish.dependsOn(assemble)
 publishToMavenLocal.dependsOn(assemble)
 task('install') {
   dependsOn(publishToMavenLocal)

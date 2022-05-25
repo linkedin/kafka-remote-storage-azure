@@ -18,4 +18,17 @@ allprojects {
     "junitJupiter": "5.8.1",
     "mockitoJunitJupiter": "3.3.3"
   ]
+
+  ext.pomConfig = {
+    url "https://linkedin.githubprivate.com/sutambe/kafka-remote-storage-azure"
+    licenses {
+      license {
+        name "BSD 2-CLAUSE LICENSE"
+        url "https://opensource.org/licenses/BSD-2-Clause"
+      }
+    }
+    scm {
+      url "https://linkedin.githubprivate.com/sutambe/kafka-remote-storage-azure"
+    }
+  }
 }
