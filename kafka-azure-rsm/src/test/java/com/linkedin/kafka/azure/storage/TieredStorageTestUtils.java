@@ -22,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Random;
 
+import static com.linkedin.kafka.azure.storage.AzureBlobRemoteStorageConfig.*;
 import static com.linkedin.kafka.azure.storage.RemoteStorageManagerDefaults.*;
 
 

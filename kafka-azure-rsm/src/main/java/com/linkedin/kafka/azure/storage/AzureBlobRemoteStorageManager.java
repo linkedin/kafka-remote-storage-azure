@@ -4,16 +4,17 @@
 
 package com.linkedin.kafka.azure.storage;
 
+import com.azure.core.util.BinaryData;
 import com.azure.storage.blob.BlobClient;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClient;
+import com.azure.storage.blob.models.BlobErrorCode;
 import com.azure.storage.blob.models.BlobStorageException;
-import com.azure.storage.blob.specialized.BlockBlobClient;
+import com.azure.storage.blob.models.ParallelTransferOptions;
 import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
-import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -47,6 +48,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
   private final MetricRegistry metricRegistry = new MetricRegistry();
   private final Timer writeLatencyTimer = metricRegistry.timer(WRITE_LATENCY_MILLIS);
   private final Meter bytesOutRateMeter = metricRegistry.meter(BYTES_OUT_RATE);
+  private AzureBlobRemoteStorageConfig config;
 
   @Override
   public void close() {
@@ -59,50 +61,59 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     for (Map.Entry<String, ?> entry: configs.entrySet()) {
       LOG.info("{}: {} ", entry.getKey(), entry.getValue());
     }
-    containerNameEncoder = new ContainerNameEncoder(RemoteStorageManagerDefaults.getOrDefaultContainerNamePrefix(configs));
-    blobServiceClient = BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(configs).buildClient();
+    config = new AzureBlobRemoteStorageConfig(configs);
+    containerNameEncoder = new ContainerNameEncoder(config.getContainerNamePrefix());
+    blobServiceClient = BlobServiceClientBuilderFactory.getBlobServiceClientBuilder(config).buildClient();
 
     ConsoleReporter reporter = ConsoleReporter.forRegistry(metricRegistry).build();
     reporter.start(600, TimeUnit.SECONDS);
     reporter.report();
   }
 
-  private int uploadToAzureBlob(final BlobContainerClient blobContainerClient, final String fileName, byte[] data) throws IOException {
-    BlockBlobClient blockBlobClient = blobContainerClient.getBlobClient(fileName).getBlockBlobClient();
-    try (InputStream inputStream = new ByteArrayInputStream(data)) {
-      blockBlobClient.upload(inputStream, data.length, true);
-    }
+  private int uploadToAzureBlob(final BlobContainerClient blobContainerClient, final String blobName, byte[] data)
+      throws RemoteStorageException {
+    BlobClient blobClient = blobContainerClient.getBlobClient(blobName);
+    blobClient.upload(BinaryData.fromBytes(data), true);
     return data.length;
   }
 
-  private long uploadToAzureBlob(final BlobContainerClient blobContainerClient, final String fileName, Path inputFile) throws IOException {
-    long size = Files.size(inputFile);
-    BlockBlobClient blockBlobClient = blobContainerClient.getBlobClient(fileName).getBlockBlobClient();
-    try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(inputFile))) {
-      blockBlobClient.upload(inputStream, Files.size(inputFile), true);
-    }
-    return size;
+  private long uploadToAzureBlob(final BlobContainerClient blobContainerClient, final String blobName, Path inputFile)
+      throws IOException, RemoteStorageException {
+    BlobClient blobClient = blobContainerClient.getBlobClient(blobName);
+
+    ParallelTransferOptions parallelTransferOptions = new ParallelTransferOptions();
+    parallelTransferOptions.setMaxSingleUploadSizeLong(config.getMaxSingleUploadSize());
+    parallelTransferOptions.setBlockSizeLong(config.getBlockSize());
+    blobClient.uploadFromFile(inputFile.toString(), null, null, null, null, null, null);
+    return Files.size(inputFile);
   }
 
   private byte[] fetchBlob(final BlobContainerClient blobContainerClient, final String fileName) throws RemoteResourceNotFoundException {
-    BlockBlobClient blockBlobClient = null;
+    BlobClient blobClient = blobContainerClient.getBlobClient(fileName);
 
-    blockBlobClient = blobContainerClient.getBlobClient(fileName).getBlockBlobClient();
-    if (!blockBlobClient.exists()) {
-      String msg = String.format("Block blob %s does not exist in container %s", fileName, blobContainerClient.getBlobContainerName());
-      throw new RemoteResourceNotFoundException(msg);
+    try {
+      long dataSize = blobClient.getProperties().getBlobSize();
+      if (dataSize > (long) Integer.MAX_VALUE) {
+        String msg = String.format("Block blob %s in container %s has size %d that is larger than Integer.MAX_VALUE",
+            fileName, blobContainerClient.getBlobContainerName(), dataSize);
+        throw new IllegalStateException(msg);
+      }
+
+      ByteArrayOutputStream outputStream = new ByteArrayOutputStream((int) dataSize);
+      blobClient.downloadStream(outputStream);
+      return outputStream.toByteArray();
+    } catch (BlobStorageException error) {
+      if (error.getErrorCode().equals(BlobErrorCode.BLOB_NOT_FOUND)) {
+        String msg = String.format(
+            "Block blob %s does not exist in container %s", fileName, blobContainerClient.getBlobContainerName());
+        throw new RemoteResourceNotFoundException(msg);
+      } else if (error.getErrorCode().equals(BlobErrorCode.CONTAINER_NOT_FOUND)) {
+        String msg = String.format("Container %s does not exist.", blobContainerClient.getBlobContainerName());
+        throw new RemoteResourceNotFoundException(msg);
+      } else {
+        throw error;
+      }
     }
-
-    long dataSize = blockBlobClient.getProperties().getBlobSize();
-    if (dataSize > (long) Integer.MAX_VALUE) {
-      String msg = String.format("Block blob %s in container %s has size %d that is larger than Integer.MAX_VALUE",
-                                 fileName, blobContainerClient.getBlobContainerName(), dataSize);
-      throw new IllegalStateException(msg);
-    }
-
-    ByteArrayOutputStream outputStream = new ByteArrayOutputStream((int) dataSize);
-    blockBlobClient.downloadStream(outputStream);
-    return outputStream.toByteArray();
   }
 
   private BlobContainerClient getContainerClient(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
@@ -110,10 +121,11 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     return blobServiceClient.getBlobContainerClient(containerName);
   }
 
+  /* Visible only for testing */
   boolean containsFile(RemoteLogSegmentMetadata remoteLogSegmentMetadata, String fileName) {
     BlobContainerClient blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
-    BlockBlobClient blockBlobClient = blobContainerClient.getBlobClient(fileName).getBlockBlobClient();
-    return blockBlobClient.exists();
+    BlobClient blobClient = blobContainerClient.getBlobClient(fileName);
+    return blobClient.exists();
   }
 
   static String getBlobNameForSegment(RemoteLogSegmentMetadata remoteLogSegmentMetadata) {
@@ -142,6 +154,51 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
   @Override
   public void copyLogSegmentData(RemoteLogSegmentMetadata remoteLogSegmentMetadata,
                                  LogSegmentData logSegmentData) throws RemoteStorageException {
+    if (remoteLogSegmentMetadata == null) {
+      throw new NullPointerException("remoteLogSegmentMetadata must be non-null");
+    }
+
+    Timer.Context timeContext = writeLatencyTimer.time();
+    try {
+      attemptCopyLogSegmentData(remoteLogSegmentMetadata, logSegmentData);
+    } catch (BlobStorageException error) {
+      if (error.getErrorCode().equals(BlobErrorCode.CONTAINER_NOT_FOUND)) {
+        createContainerForRemoteLogSegment(remoteLogSegmentMetadata);
+        attemptCopyLogSegmentData(remoteLogSegmentMetadata, logSegmentData);
+      } else {
+        throw error;
+      }
+    } catch (RemoteStorageException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new RemoteStorageException(e);
+    } finally {
+      timeContext.stop();
+    }
+  }
+
+  private void createContainerForRemoteLogSegment(RemoteLogSegmentMetadata remoteLogSegmentMetadata)
+      throws RemoteStorageException {
+    BlobContainerClient blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
+
+    final String blobContainerName = blobContainerClient.getBlobContainerName();
+    try {
+      LOG.info("Container {} not found for remote log segment {}. Creating container.",
+          blobContainerName, remoteLogSegmentMetadata.remoteLogSegmentId());
+      blobContainerClient.create();
+    } catch (BlobStorageException error) {
+      // Because of multiple clients trying to create the container at the same time, it
+      // is possible that the container already exists by the time we try to create it.
+      if (!error.getErrorCode().equals(BlobErrorCode.CONTAINER_ALREADY_EXISTS)) {
+        throw new RemoteStorageException(error);
+      }
+    } catch (Exception e) {
+      throw new RemoteStorageException(e);
+    }
+  }
+
+  private void attemptCopyLogSegmentData(RemoteLogSegmentMetadata remoteLogSegmentMetadata,
+      LogSegmentData logSegmentData) throws RemoteStorageException {
     LOG.debug("Writing remote log segment started for {}", remoteLogSegmentMetadata);
 
     if (remoteLogSegmentMetadata == null) {
@@ -152,23 +209,7 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
     }
     BlobContainerClient blobContainerClient = getContainerClient(remoteLogSegmentMetadata);
 
-    final String blobContainerName = blobContainerClient.getBlobContainerName();
-    if (!blobContainerClient.exists()) {
-      LOG.debug("Creating container {}", blobContainerName);
-      blobContainerClient.create();
-    } else {
-      LOG.debug("Container already exists {}", blobContainerName);
-    }
-
     final String segmentKey = getBlobNameForSegment(remoteLogSegmentMetadata);
-    BlockBlobClient blockBlobClient = blobContainerClient.getBlobClient(segmentKey).getBlockBlobClient();
-
-    if (blockBlobClient.exists()) {
-      throw new RemoteStorageException(String.format("Blob container %s already contains the segment for id %s",
-                                                     blobContainerName, remoteLogSegmentMetadata.remoteLogSegmentId()));
-    }
-
-    Timer.Context timeContext = writeLatencyTimer.time();
     try {
       long segmentBytes = uploadToAzureBlob(blobContainerClient, segmentKey, logSegmentData.logSegment());
       long leaderEpochIndexBytes = uploadToAzureBlob(blobContainerClient,
@@ -185,17 +226,14 @@ public class AzureBlobRemoteStorageManager implements RemoteStorageManager {
                                              logSegmentData.timeIndex());
 
       if (logSegmentData.transactionIndex().isPresent()) {
-        uploadToAzureBlob(blobContainerClient,
-                          getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.TRANSACTION),
-                          logSegmentData.transactionIndex().get());
+        uploadToAzureBlob(blobContainerClient, getBlobNameForIndex(remoteLogSegmentMetadata, IndexType.TRANSACTION),
+            logSegmentData.transactionIndex().get());
       }
 
       LOG.debug("Writing remote log segment completed for {}", remoteLogSegmentMetadata);
       bytesOutRateMeter.mark(segmentBytes + leaderEpochIndexBytes + producerSnapshotBytes + offsetIndexBytes + timeIndexBytes);
-    } catch (Exception e) {
+    } catch (IOException e) {
       throw new RemoteStorageException(e);
-    } finally {
-      timeContext.stop();
     }
   }
 

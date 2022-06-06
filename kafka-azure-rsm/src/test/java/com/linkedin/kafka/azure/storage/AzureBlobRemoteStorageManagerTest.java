@@ -4,6 +4,9 @@
 
 package com.linkedin.kafka.azure.storage;
 
+import com.azure.core.util.BinaryData;
+import com.azure.storage.blob.BlobClient;
+import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 import java.net.InetSocketAddress;
@@ -17,8 +20,12 @@ import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentMetadata;
 import org.apache.kafka.server.log.remote.storage.RemoteStorageManager;
 import org.apache.kafka.server.log.remote.storage.RemoteResourceNotFoundException;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.File;
@@ -46,13 +53,8 @@ public class AzureBlobRemoteStorageManagerTest {
 
   private static Process azuriteProcess = null;
 
-  private static void cleanUpAzurite() {
-    BlobServiceClientBuilder builder = new BlobServiceClientBuilder();
-    BlobServiceClient serviceClient = builder.connectionString(AZURITE_BLOB_SERVICE_CONNECTION_STRING).buildClient();
-    serviceClient.listBlobContainers().forEach(container -> {
-      serviceClient.getBlobContainerClient(container.getName()).delete();
-    });
-  }
+  private AzureBlobRemoteStorageManager remoteStorageManager;
+  private BlobServiceClient serviceClient;
 
   private static RemoteLogSegmentMetadata createRemoteLogSegmentMetadata() {
     return TieredStorageTestUtils.createRemoteLogSegmentMetadata("foo", 1);
@@ -148,27 +150,40 @@ public class AzureBlobRemoteStorageManagerTest {
     }
   }
 
+  @BeforeEach
+  void beforeEach() {
+    remoteStorageManager = new AzureBlobRemoteStorageManager();
+    remoteStorageManager.configure(AZURITE_CONFIG);
+    BlobServiceClientBuilder builder = new BlobServiceClientBuilder();
+    serviceClient = builder.connectionString(AZURITE_BLOB_SERVICE_CONNECTION_STRING).buildClient();
+    cleanUpAzurite();
+  }
+
+  private void cleanUpAzurite() {
+    serviceClient.listBlobContainers().forEach(container -> {
+      serviceClient.getBlobContainerClient(container.getName()).delete();
+    });
+  }
+
+  @AfterEach
+  void afterEach() {
+    cleanUpAzurite();
+  }
+
   /**
    * Cleanup and shutdown azurite-blob process started in {@link #beforeClass()}
    */
   @AfterAll
   public static void afterClass() {
     if (azuriteProcess != null) {
-      try {
-        cleanUpAzurite();
-      } finally {
-        List<ProcessHandle> children = azuriteProcess.children().collect(Collectors.toList());
-        children.forEach(ProcessHandle::destroy);
-        azuriteProcess.destroy();
-      }
+      List<ProcessHandle> children = azuriteProcess.children().collect(Collectors.toList());
+      children.forEach(ProcessHandle::destroy);
+      azuriteProcess.destroy();
     }
   }
 
   @Test
-  public void testCopyLogSegment() throws Exception {
-    AzureBlobRemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
-    remoteStorageManager.configure(AZURITE_CONFIG);
-
+  public void testCopyLogSegmentSucceedsWhenContainerDoesNotExist() throws Exception {
     RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
     LogSegmentData logSegmentData = createLogSegmentData();
 
@@ -189,10 +204,65 @@ public class AzureBlobRemoteStorageManagerTest {
   }
 
   @Test
-  public void testCopyLogSegmentWithoutTxnIndex() throws Exception {
-    AzureBlobRemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
-    remoteStorageManager.configure(AZURITE_CONFIG);
+  public void testCopyLogSegmentDoesNotFailIfContainerExists() throws Exception {
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    LogSegmentData logSegmentData = createLogSegmentData();
+    serviceClient.createBlobContainer(remoteStorageManager.getContainerName(segmentMetadata));
 
+    // Copy the segment
+    remoteStorageManager.copyLogSegmentData(segmentMetadata, logSegmentData);
+
+    // Check that the segment exists in the RSM.
+    boolean containsSegment =
+        remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.getBlobNameForSegment(segmentMetadata));
+    assertTrue(containsSegment);
+
+    // Check that the indexes exist in the RSM.
+    for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
+      boolean containsIndex =
+          remoteStorageManager.containsFile(segmentMetadata, AzureBlobRemoteStorageManager.getBlobNameForIndex(segmentMetadata, indexType));
+      assertTrue(containsIndex);
+    }
+  }
+
+  @Test
+  public void testCopyLogSegmentDoesNotFailIfSegmentBlobExists() throws Exception {
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    LogSegmentData logSegmentData = createLogSegmentData();
+    String containerName = remoteStorageManager.getContainerName(segmentMetadata);
+    serviceClient.createBlobContainer(containerName);
+    BlobContainerClient blobContainerClient = serviceClient.getBlobContainerClient(containerName);
+
+    BlobClient blobClient =
+        blobContainerClient.getBlobClient(AzureBlobRemoteStorageManager.getBlobNameForSegment(segmentMetadata));
+    BinaryData binaryData = BinaryData.fromBytes(TieredStorageTestUtils.randomBytes(100));
+    blobClient.upload(binaryData);
+
+    // Copy the segment, should not throw exception
+    remoteStorageManager.copyLogSegmentData(segmentMetadata, logSegmentData);
+  }
+
+  @ParameterizedTest
+  @EnumSource(RemoteStorageManager.IndexType.class)
+  public void testCopyLogSegmentDoesNotFailsIfIndexBlobExists(RemoteStorageManager.IndexType indexType) throws Exception {
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    LogSegmentData logSegmentData = createLogSegmentData();
+    String containerName = remoteStorageManager.getContainerName(segmentMetadata);
+    serviceClient.createBlobContainer(containerName);
+    BlobContainerClient blobContainerClient = serviceClient.getBlobContainerClient(containerName);
+
+    BlobClient blobClient =
+        blobContainerClient.getBlobClient(AzureBlobRemoteStorageManager.getBlobNameForIndex(
+            segmentMetadata, indexType));
+    BinaryData binaryData = BinaryData.fromBytes(TieredStorageTestUtils.randomBytes(100));
+    blobClient.upload(binaryData);
+
+    // Copy the segment, should not throw exception
+    remoteStorageManager.copyLogSegmentData(segmentMetadata, logSegmentData);
+  }
+
+  @Test
+  public void testCopyLogSegmentWithoutTxnIndex() throws Exception {
     RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
     LogSegmentData logSegmentData = createLogSegmentDataWithoutTxnIndex();
 
@@ -217,9 +287,6 @@ public class AzureBlobRemoteStorageManagerTest {
 
   @Test
   public void testFetchLogSegmentIndexes() throws Exception {
-    RemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
-    remoteStorageManager.configure(AZURITE_CONFIG);
-
     RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
     LogSegmentData logSegmentData = createLogSegmentData();
 
@@ -255,10 +322,25 @@ public class AzureBlobRemoteStorageManagerTest {
   }
 
   @Test
-  public void testFetchSegmentsForRange() throws Exception {
-    RemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
-    remoteStorageManager.configure(AZURITE_CONFIG);
+  public void testFetchLogSegmentFailsIfContainerNotFound() {
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
 
+    assertThrows(RemoteResourceNotFoundException.class, () ->
+        remoteStorageManager.fetchLogSegment(segmentMetadata, 0));
+  }
+
+  @Test
+  public void testFetchLogSegmentFailsIfBlobNotFound() {
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    String containerName = remoteStorageManager.getContainerName(segmentMetadata);
+    serviceClient.createBlobContainer(containerName);
+
+    assertThrows(RemoteResourceNotFoundException.class, () ->
+        remoteStorageManager.fetchLogSegment(segmentMetadata, 0));
+  }
+
+  @Test
+  public void testFetchSegmentsForRange() throws Exception {
     RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
     int segmentSize = 100;
     LogSegmentData logSegmentData = createLogSegmentData(segmentSize, true);
@@ -288,9 +370,6 @@ public class AzureBlobRemoteStorageManagerTest {
 
   @Test
   public void testFetchInvalidRange() throws Exception {
-    RemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
-    remoteStorageManager.configure(AZURITE_CONFIG);
-
     RemoteLogSegmentMetadata remoteLogSegmentMetadata = createRemoteLogSegmentMetadata();
     LogSegmentData logSegmentData = createLogSegmentData();
 
@@ -307,9 +386,6 @@ public class AzureBlobRemoteStorageManagerTest {
 
   @Test
   public void testDeleteSegment() throws Exception {
-    RemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
-    remoteStorageManager.configure(AZURITE_CONFIG);
-
     RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
     LogSegmentData logSegmentData = createLogSegmentData();
 
@@ -338,9 +414,6 @@ public class AzureBlobRemoteStorageManagerTest {
 
   @Test
   public void testDeletingOneSegmentDoesNotDeleteOtherSegments() throws Exception {
-    RemoteStorageManager remoteStorageManager = new AzureBlobRemoteStorageManager();
-    remoteStorageManager.configure(AZURITE_CONFIG);
-
     final Uuid topicId = Uuid.randomUuid();
     final int leaderEpochStartOffset = 0;
     RemoteLogSegmentMetadata segment1Metadata =

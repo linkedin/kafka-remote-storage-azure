@@ -5,7 +5,6 @@
 package com.linkedin.kafka.azure.storage;
 
 import com.azure.storage.blob.BlobServiceClientBuilder;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,22 +23,13 @@ public final class BlobServiceClientBuilderFactory {
 
   /**
    * Create {@link BlobServiceClientBuilder}
-   * @param configs configs containing Azure Blob Storage endpoint, account name and key.
+   * @param config config object containing Azure Blob Storage endpoint, account name and key.
    * @return BlobServiceClientBuilder
    */
-  public static BlobServiceClientBuilder getBlobServiceClientBuilder(Map<String, ?> configs) {
-    String endpointConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ENDPOINT_PROP);
-    String accountNameConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_PROP);
-    String accountKeyConfig = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ACCOUNT_KEY_PROP);
-
-    if (endpointConfig == null || endpointConfig.trim().isEmpty()
-        || accountNameConfig == null || accountNameConfig.trim().isEmpty()
-        || accountKeyConfig == null || accountKeyConfig.trim().isEmpty()) {
-      String msg = String.format("For Azure storage-key authentication, blob storage endpoint, account name, and account key must be provided. "
-                                 + "found endpoint = '%s', found account name = '%s', found account key = '%s'",
-                                 endpointConfig, accountNameConfig, accountKeyConfig);
-      throw new IllegalArgumentException(msg);
-    }
+  public static BlobServiceClientBuilder getBlobServiceClientBuilder(AzureBlobRemoteStorageConfig config) {
+    String endpointConfig = config.getEndpoint();
+    String accountNameConfig = config.getAccountName();
+    String accountKeyConfig = config.getAccountKey();
 
     Endpoint endpoint = Endpoint.fromString(endpointConfig);
     if (endpoint.isProduction() && !endpoint.isSecure()) {
