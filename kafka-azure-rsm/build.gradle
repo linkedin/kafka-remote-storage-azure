@@ -24,6 +24,7 @@ dependencies {
   implementation "org.apache.kafka:kafka-storage:${depVersions.kafka}"
   implementation "org.apache.kafka:kafka-storage-api:${depVersions.kafka}"
   implementation "io.dropwizard.metrics:metrics-core:${depVersions.dropwizardMetrics}"
+  implementation "com.github.ben-manes.caffeine:caffeine:${depVersions.caffeine}"
 
   // Tests use slf4j logging api with log4j2 backend.
   // log4j-slf4j-impl initializes the logging system with properties in log4j2.xml

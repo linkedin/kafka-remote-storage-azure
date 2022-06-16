@@ -17,13 +17,15 @@ public class AzureBlobRemoteStorageConfig {
   // Container name prefix is used to distinguish between multiple clusters with same name.
   // For example, different "metrics" clusters in the same region could have different prefix.
   public static final String RSM_AZURE_BLOB_STORAGE_CONTAINER_NAME_PREFIX_PROP = "azure.blob.storage.container.name.prefix";
+  public static final String RSM_AZURE_BLOB_STORAGE_CACHE_BYTES_PROP = "azure.blob.storage.cache.bytes";
 
   private final String endpoint;
   private final String accountName;
   private final String accountKey;
-  private final Long maxSingleUploadSize;
-  private final Long blockSize;
+  private final long maxSingleUploadSize;
+  private final long blockSize;
   private final String containerNamePrefix;
+  private final long cacheBytes;
 
   public AzureBlobRemoteStorageConfig(Map<String, ?> configs) {
     this.endpoint = (String) configs.get(RSM_AZURE_BLOB_STORAGE_ENDPOINT_PROP);
@@ -39,14 +41,16 @@ public class AzureBlobRemoteStorageConfig {
       throw new IllegalArgumentException(msg);
     }
 
-    this.maxSingleUploadSize = getLongValueOrNullForProp(configs, RSM_AZURE_BLOB_STORAGE_MAX_SINGLE_UPLOAD_SIZE_PROP,
+    this.maxSingleUploadSize = getLongValueOrDefaultForProp(configs, RSM_AZURE_BLOB_STORAGE_MAX_SINGLE_UPLOAD_SIZE_PROP,
         RemoteStorageManagerDefaults.RSM_AZURE_BLOB_STORAGE_MAX_SINGLE_UPLOAD_SIZE_DEFAULT);
-    this.blockSize = getLongValueOrNullForProp(configs, RSM_AZURE_BLOB_STORAGE_BLOCK_SIZE_PROP,
+    this.blockSize = getLongValueOrDefaultForProp(configs, RSM_AZURE_BLOB_STORAGE_BLOCK_SIZE_PROP,
         RemoteStorageManagerDefaults.RSM_AZURE_BLOB_STORAGE_BLOCK_SIZE_DEFAULT);
 
     String containerNamePrefixValue = (String) configs.get(RSM_AZURE_BLOB_STORAGE_CONTAINER_NAME_PREFIX_PROP);
     this.containerNamePrefix = containerNamePrefixValue != null ? containerNamePrefixValue
         : RemoteStorageManagerDefaults.RSM_AZURE_BLOB_STORAGE_CONTAINER_NAME_PREFIX_DEFAULT;
+    this.cacheBytes = getLongValueOrDefaultForProp(configs, RSM_AZURE_BLOB_STORAGE_CACHE_BYTES_PROP,
+        RemoteStorageManagerDefaults.RSM_AZURE_BLOB_STORAGE_CACHE_BYTES_DEFAULT);
   }
 
   public String getEndpoint() {
@@ -73,7 +77,11 @@ public class AzureBlobRemoteStorageConfig {
     return containerNamePrefix;
   }
 
-  private Long getLongValueOrNullForProp(Map<String, ?> configs, String propKey, long defaultValue) {
+  public long getCacheBytes() {
+    return cacheBytes;
+  }
+
+  private long getLongValueOrDefaultForProp(Map<String, ?> configs, String propKey, long defaultValue) {
     final String propValueString = (String) configs.get(propKey);
     return propValueString == null ? defaultValue : Long.parseLong(propValueString);
   }

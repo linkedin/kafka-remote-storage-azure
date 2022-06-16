@@ -10,6 +10,8 @@ package com.linkedin.kafka.azure.storage;
  */
 public final class RemoteStorageManagerDefaults {
   public static final String RSM_AZURE_BLOB_STORAGE_CONTAINER_NAME_PREFIX_DEFAULT = "";
+  private static final long ONE_MI_B = 1024 * 1024;
+  public static final long RSM_AZURE_BLOB_STORAGE_CACHE_BYTES_DEFAULT = 256 * ONE_MI_B;
   public static final int RSM_AZURE_BLOB_STORAGE_CONTAINER_NAME_PREFIX_MAX_LENGTH = 26;
   public static final long RSM_AZURE_BLOB_STORAGE_MAX_SINGLE_UPLOAD_SIZE_DEFAULT = 256L * 1024 * 1024;
   public static final long RSM_AZURE_BLOB_STORAGE_BLOCK_SIZE_DEFAULT = 4L * 1024 * 1024;

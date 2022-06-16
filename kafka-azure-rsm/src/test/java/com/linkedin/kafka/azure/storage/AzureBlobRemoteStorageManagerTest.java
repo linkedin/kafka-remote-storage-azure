@@ -9,6 +9,10 @@ import com.azure.storage.blob.BlobClient;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
+import com.azure.storage.blob.models.BlobErrorCode;
+import com.azure.storage.blob.models.BlobStorageException;
+import com.linkedin.kafka.azure.storage.cache.AzureBlobStorageCache;
+import com.linkedin.kafka.azure.storage.cache.AzureBlobStorageMemoryCache;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
@@ -18,7 +22,6 @@ import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.log.remote.storage.LogSegmentData;
 import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentMetadata;
 import org.apache.kafka.server.log.remote.storage.RemoteStorageManager;
-import org.apache.kafka.server.log.remote.storage.RemoteResourceNotFoundException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -26,8 +29,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -39,10 +40,9 @@ import java.util.*;
 
 import static com.linkedin.kafka.azure.storage.RemoteStorageManagerDefaults.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 public class AzureBlobRemoteStorageManagerTest {
-  private static final Logger log = LoggerFactory.getLogger(AzureBlobRemoteStorageManagerTest.class);
-
   private static final String AZURITE_BLOB_SERVICE_CONNECTION_STRING =
       String.format("DefaultEndpointsProtocol=http;AccountName=%s;AccountKey=%s;BlobEndpoint=%s/%s;",
                     AZURITE_ACCOUNT_NAME, AZURITE_ACCOUNT_KEY, AZURITE_ENDPOINT, AZURITE_ACCOUNT_NAME);
@@ -140,7 +140,6 @@ public class AzureBlobRemoteStorageManagerTest {
 
   /**
    * Start azurite-blob process if not already running
-   * @throws Exception
    */
   @BeforeAll
   public static void beforeClass() throws Exception {
@@ -160,13 +159,13 @@ public class AzureBlobRemoteStorageManagerTest {
   }
 
   private void cleanUpAzurite() {
-    serviceClient.listBlobContainers().forEach(container -> {
-      serviceClient.getBlobContainerClient(container.getName()).delete();
-    });
+    serviceClient.listBlobContainers().forEach(container ->
+        serviceClient.getBlobContainerClient(container.getName()).delete());
   }
 
   @AfterEach
-  void afterEach() {
+  void afterEach() throws IOException {
+    remoteStorageManager.close();
     cleanUpAzurite();
   }
 
@@ -240,6 +239,65 @@ public class AzureBlobRemoteStorageManagerTest {
 
     // Copy the segment, should not throw exception
     remoteStorageManager.copyLogSegmentData(segmentMetadata, logSegmentData);
+  }
+
+  private BlobStorageException buildMockBlobStorageException() {
+    final BlobStorageException thrownException = mock(BlobStorageException.class);
+    when(thrownException.getErrorCode()).thenReturn(BlobErrorCode.INTERNAL_ERROR);
+    return thrownException;
+  }
+
+  @Test
+  public void testCopyLogSegmentThrowsIfAzureBlobStorageThrowsOnSegmentCopy() throws Exception {
+    AzureBlobStorageClient mockClient = mock(AzureBlobStorageClient.class);
+    AzureBlobRemoteStorageManager rsmUnderTest = new AzureBlobRemoteStorageManager(
+        new ContainerNameEncoder(""), mockClient, mock(AzureBlobStorageCache.class));
+
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    LogSegmentData logSegmentData = createLogSegmentData();
+
+    final BlobStorageException blobStorageException = buildMockBlobStorageException();
+    when(mockClient.uploadFileToBlob(anyString(), anyString(), eq(logSegmentData.logSegment())))
+        .thenThrow(blobStorageException);
+
+    assertThrows(AzureBlobStorageException.class,
+        () -> rsmUnderTest.copyLogSegmentData(segmentMetadata, logSegmentData));
+  }
+
+  @ParameterizedTest
+  @EnumSource(value = RemoteStorageManager.IndexType.class, mode = EnumSource.Mode.EXCLUDE, names = "LEADER_EPOCH")
+  void testCopyLogSegmentThrowsIfAzureBlobStorageThrowsOnIndexCopy(RemoteStorageManager.IndexType indexType) throws Exception {
+    AzureBlobStorageClient mockClient = mock(AzureBlobStorageClient.class);
+    AzureBlobRemoteStorageManager rsmUnderTest = new AzureBlobRemoteStorageManager(
+        new ContainerNameEncoder(""), mockClient, mock(AzureBlobStorageCache.class));
+
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    LogSegmentData logSegmentData = createLogSegmentData();
+
+    final BlobStorageException blobStorageException = buildMockBlobStorageException();
+    final Path expectedIndexFilePath = AzureBlobRemoteStorageManager.getIndexFilePath(logSegmentData, indexType).get();
+    when(mockClient.uploadFileToBlob(anyString(), anyString(), eq(expectedIndexFilePath)))
+        .thenThrow(blobStorageException);
+
+    assertThrows(AzureBlobStorageException.class,
+        () -> rsmUnderTest.copyLogSegmentData(segmentMetadata, logSegmentData));
+  }
+
+  @Test
+  void testCopyLogSegmentThrowsIfAzureBlobStorageThrowsOnLeaderEpochIndexCopy() throws Exception {
+    AzureBlobStorageClient mockClient = mock(AzureBlobStorageClient.class);
+    AzureBlobRemoteStorageManager rsmUnderTest = new AzureBlobRemoteStorageManager(
+        new ContainerNameEncoder(""), mockClient, mock(AzureBlobStorageCache.class));
+
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    LogSegmentData logSegmentData = createLogSegmentData();
+
+    final BlobStorageException blobStorageException = buildMockBlobStorageException();
+    when(mockClient.uploadBytesToBlob(anyString(), anyString(), any(byte[].class)))
+        .thenThrow(blobStorageException);
+
+    assertThrows(AzureBlobStorageException.class,
+        () -> rsmUnderTest.copyLogSegmentData(segmentMetadata, logSegmentData));
   }
 
   @ParameterizedTest
@@ -321,11 +379,49 @@ public class AzureBlobRemoteStorageManagerTest {
     }
   }
 
+  @ParameterizedTest
+  @EnumSource(value = RemoteStorageManager.IndexType.class)
+  void testFetchLogSegmentIndexThrowsIfAzureBlobStorageThrows(RemoteStorageManager.IndexType indexType) {
+    AzureBlobStorageClient mockClient = mock(AzureBlobStorageClient.class);
+    AzureBlobStorageCache mockCache = mock(AzureBlobStorageCache.class);
+    AzureBlobRemoteStorageManager rsmUnderTest = new AzureBlobRemoteStorageManager(
+        new ContainerNameEncoder(""), mockClient, mockCache);
+
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+
+    final BlobStorageException blobStorageException = buildMockBlobStorageException();
+    when(mockCache.getInputStream(anyString(),
+        eq(AzureBlobRemoteStorageManager.getBlobNameForIndex(segmentMetadata, indexType))))
+        .thenThrow(blobStorageException);
+
+    assertThrows(AzureBlobStorageException.class,
+        () -> rsmUnderTest.fetchIndex(segmentMetadata, indexType));
+  }
+
+  @Test
+  void testFetchLogSegmentThrowsIfAzureBlobStorageThrows() {
+    AzureBlobStorageClient mockClient = mock(AzureBlobStorageClient.class);
+    AzureBlobStorageCache mockCache = mock(AzureBlobStorageCache.class);
+    AzureBlobRemoteStorageManager rsmUnderTest = new AzureBlobRemoteStorageManager(
+        new ContainerNameEncoder(""), mockClient, mockCache);
+
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+
+    final BlobStorageException blobStorageException = buildMockBlobStorageException();
+    when(mockCache.getInputStream(anyString(),
+        eq(AzureBlobRemoteStorageManager.getBlobNameForSegment(segmentMetadata)),
+        anyInt(), anyInt()))
+        .thenThrow(blobStorageException);
+
+    assertThrows(AzureBlobStorageException.class,
+        () -> rsmUnderTest.fetchLogSegment(segmentMetadata, 0));
+  }
+
   @Test
   public void testFetchLogSegmentFailsIfContainerNotFound() {
     RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
 
-    assertThrows(RemoteResourceNotFoundException.class, () ->
+    assertThrows(AzureResourceNotFoundException.class, () ->
         remoteStorageManager.fetchLogSegment(segmentMetadata, 0));
   }
 
@@ -335,7 +431,7 @@ public class AzureBlobRemoteStorageManagerTest {
     String containerName = remoteStorageManager.getContainerName(segmentMetadata);
     serviceClient.createBlobContainer(containerName);
 
-    assertThrows(RemoteResourceNotFoundException.class, () ->
+    assertThrows(AzureResourceNotFoundException.class, () ->
         remoteStorageManager.fetchLogSegment(segmentMetadata, 0));
   }
 
@@ -401,14 +497,73 @@ public class AzureBlobRemoteStorageManagerTest {
     remoteStorageManager.deleteLogSegmentData(segmentMetadata);
 
     // Check that the segment data does not exist.
-    assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segmentMetadata, 0));
+    assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segmentMetadata, 0));
 
     // Check that the segment data does not exist for range.
-    assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segmentMetadata, 0, 1));
+    assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segmentMetadata, 0, 1));
 
     // Check that all the indexes are not found.
     for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
-      assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchIndex(segmentMetadata, indexType));
+      assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchIndex(segmentMetadata, indexType));
+    }
+  }
+
+  @Test
+  public void testDeleteSegmentSucceedsIfContainerNotFound() throws Exception {
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+
+    // Create the container to avoid CONTAINER_NOT_FOUND error.
+    serviceClient.createBlobContainer(remoteStorageManager.getContainerName(segmentMetadata));
+
+    // Delete segment and check that it does not exist in RSM.
+    remoteStorageManager.deleteLogSegmentData(segmentMetadata);
+  }
+
+  @Test
+  public void testDeleteSegmentSucceedsIfBlobNotFound() throws Exception {
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+
+    // Delete segment and check that it does not exist in RSM.
+    remoteStorageManager.deleteLogSegmentData(segmentMetadata);
+
+    // Check that the segment data does not exist.
+    assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segmentMetadata, 0));
+
+    // Check that the segment data does not exist for range.
+    assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segmentMetadata, 0, 1));
+
+    // Check that all the indexes are not found.
+    for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
+      assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchIndex(segmentMetadata, indexType));
+    }
+  }
+
+  @Test
+  public void testDeleteSegmentThrowsIfAzureBlobStorageThrows() {
+    AzureBlobStorageClient mockClient = mock(AzureBlobStorageClient.class);
+    AzureBlobStorageCache mockCache = mock(AzureBlobStorageCache.class);
+    AzureBlobRemoteStorageManager rsmUnderTest = new AzureBlobRemoteStorageManager(
+        new ContainerNameEncoder(""), mockClient, mockCache);
+
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+
+    final BlobStorageException blobStorageException = buildMockBlobStorageException();
+
+    doThrow(blobStorageException)
+        .doNothing()
+        .when(mockClient)
+        .deleteBlob(anyString(), eq(AzureBlobRemoteStorageManager.getBlobNameForSegment(segmentMetadata)));
+
+    assertThrows(AzureBlobStorageException.class, () -> rsmUnderTest.deleteLogSegmentData(segmentMetadata));
+
+    verify(mockClient).deleteBlob(anyString(),
+        eq(AzureBlobRemoteStorageManager.getBlobNameForSegment(segmentMetadata)));
+
+    // Verify that even though the deleteBlob call for the segment blob fails,
+    // deleteBlob is subsequently invoked for index blobs.
+    for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
+      verify(mockClient).deleteBlob(anyString(),
+          eq(AzureBlobRemoteStorageManager.getBlobNameForIndex(segmentMetadata, indexType)));
     }
   }
 
@@ -443,19 +598,50 @@ public class AzureBlobRemoteStorageManagerTest {
     remoteStorageManager.deleteLogSegmentData(segment1Metadata);
 
     // Check that the segment data does not exist.
-    assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segment1Metadata, 0));
+    assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segment1Metadata, 0));
 
     // Check that the segment data does not exist for range.
-    assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segment1Metadata, 0, 1));
+    assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchLogSegment(segment1Metadata, 0, 1));
 
     // Check that all the indexes are not found.
     for (RemoteStorageManager.IndexType indexType : RemoteStorageManager.IndexType.values()) {
-      assertThrows(RemoteResourceNotFoundException.class, () -> remoteStorageManager.fetchIndex(segment1Metadata, indexType));
+      assertThrows(AzureResourceNotFoundException.class, () -> remoteStorageManager.fetchIndex(segment1Metadata, indexType));
     }
 
     // Check that the copied second segment exists in rsm and it is same.
     try (InputStream segmentStream = remoteStorageManager.fetchLogSegment(segment2Metadata, 0)) {
       matchBytes(segmentStream, logSegment2Data.logSegment());
     }
+  }
+
+  @Test
+  void testFetchedLogSegmentIsCached() throws Exception {
+    AzureBlobStorageClient mockAzureClient = mock(AzureBlobStorageClient.class);
+    AzureBlobRemoteStorageManager rsmUnderTest = new AzureBlobRemoteStorageManager(
+        new ContainerNameEncoder(""), mockAzureClient,
+        new AzureBlobStorageMemoryCache(1024, mockAzureClient::fetchBlobAsBytes));
+
+    RemoteLogSegmentMetadata segmentMetadata = createRemoteLogSegmentMetadata();
+    LogSegmentData logSegmentData = createLogSegmentData();
+    rsmUnderTest.copyLogSegmentData(segmentMetadata, logSegmentData);
+
+    verify(mockAzureClient, atLeastOnce()).uploadFileToBlob(anyString(), anyString(), any(Path.class));
+    verify(mockAzureClient, atLeastOnce()).uploadBytesToBlob(anyString(), anyString(), any(byte[].class));
+
+    when(mockAzureClient.fetchBlobAsBytes(anyString(), anyString()))
+        .thenReturn(Files.readAllBytes(logSegmentData.logSegment()));
+
+    final InputStream initialSegmentStream = rsmUnderTest.fetchLogSegment(segmentMetadata, 0);
+    matchBytes(initialSegmentStream, logSegmentData.logSegment());
+
+    verify(mockAzureClient).fetchBlobAsBytes(anyString(), anyString());
+
+    // Replace Azure client with mock client
+
+    // Now verify that the mock client never gets called again, but cached segment is returned
+    final InputStream cachedSegmentStream = rsmUnderTest.fetchLogSegment(segmentMetadata, 0);
+    matchBytes(cachedSegmentStream, logSegmentData.logSegment());
+
+    verifyNoMoreInteractions(mockAzureClient);
   }
 }
