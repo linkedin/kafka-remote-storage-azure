@@ -21,7 +21,7 @@ allprojects {
   ]
 
   ext.pomConfig = {
-    url "https://linkedin.githubprivate.com/sutambe/kafka-remote-storage-azure"
+    url "https://github.com/linkedin/kafka-remote-storage-azure"
     licenses {
       license {
         name "BSD 2-CLAUSE LICENSE"
@@ -29,7 +29,7 @@ allprojects {
       }
     }
     scm {
-      url "https://linkedin.githubprivate.com/sutambe/kafka-remote-storage-azure"
+      url "https://github.com/linkedin/kafka-remote-storage-azure"
     }
   }
 }
