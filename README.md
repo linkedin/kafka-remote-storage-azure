@@ -5,7 +5,7 @@ minimally viable features such as copying, fetching, and deleting log segments a
 also includes an in-memory implementation of a blob cache and storage-key-based authentication for blobs I/O.
 
 This implementation is released in open-source to gather early feedback from the community. There are known
-[issues](/linkedin/kafka-remote-storage-azure/issues) with this plugin.
+[issues](https://github.com/linkedin/kafka-remote-storage-azure/issues) with this plugin.
 
 The RSM plugin is compatible with [linkedin/kafka 3.0-li branch](https://github.com/linkedin/kafka/tree/3.0-li) and
 has been minimally tested on a small Linkedin Kafka 3.0 cluster using synthetic traffic. The scenarios tested
